@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync, lstatSync, symlinkSync, rmSync, realpathSync, renameSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { execSync, execFileSync } from 'node:child_process'
+import { execSync, execFileSync, execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { OLLAMA_URL } from '../config.js'
 import { makeLazyBinResolver } from '../platform.js'
 import { logger } from '../logger.js'
@@ -777,12 +778,20 @@ function runTmux(host: string | null, tmuxArgs: string[], opts: { timeout?: numb
   execFileSync(inv.file, inv.args, { timeout: opts.timeout ?? (host ? 8000 : 3000), stdio: ['ignore', 'ignore', 'pipe'] })
 }
 
-// What to run, split out from how to run it. A second capture path is about to
-// exist (async, for the watcher sweeps), and the two have to agree on binary,
-// args and deadline or a detector reading through one will see a different pane
-// from a request reading through the other -- a difference no functional test
-// can distinguish from a real state change. Keeping the decision here makes the
-// agreement structural: a timeout tuned in this function moves both callers.
+// promisify runs at module load, so a test that mocks node:child_process with a
+// bare factory (no `...(await orig())` spread) and then loads this module for
+// real gets `promisify(undefined)` -> TypeError at import, pointing at node:util
+// rather than at the missing mock key. Every such test in the suite today
+// spreads the real module, so this is a note for the next one, not a known bug.
+const execFileAsync = promisify(execFile)
+
+// What to run, split out from how to run it. A second capture path exists
+// beside it (async, for the watcher sweeps), and the two have to agree on
+// binary, args and deadline or a detector reading through one will see a
+// different pane from a request reading through the other -- a difference no
+// functional test can distinguish from a real state change. Keeping the
+// decision here makes the agreement structural: a timeout tuned in this
+// function moves both callers.
 function tmuxCaptureSpec(host: string | null, tmuxArgs: string[], opts: { timeout?: number } = {}): { file: string, args: string[], timeout: number } {
   if (host) ensureControlDir()
   const inv = buildTmuxInvocation(host, tmuxBin(), tmuxArgs)
@@ -794,6 +803,26 @@ function captureTmux(host: string | null, tmuxArgs: string[], opts: { timeout?: 
   // stdout piped (we return it); stderr piped too so tmux's `can't find session`
   // noise lands in err.stderr on failure rather than the parent stderr / dashboard.log.
   return execFileSync(spec.file, spec.args, { timeout: spec.timeout, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] })
+}
+
+// Async twin of captureTmux, for the watcher sweeps: execFileSync forks ON the
+// event loop, so a sweep over 37 agents froze the dashboard for the duration of
+// every capture. execFile hands the fork to libuv instead.
+//
+// No `stdio` here on purpose: execFile always pipes and delivers stderr on the
+// rejected error, which is exactly what the sync path's explicit stdio buys.
+// maxBuffer is left at the default, identical to execFileSync's, so an oversized
+// pane truncates the same way on both paths instead of only one.
+//
+// CALLERS: iterate sequentially (`for ... of` + await). execFileSync used to be
+// its own rate limiter -- one tmux/ssh child at a time -- and awaiting in a
+// sequential loop is what preserves that. A `Promise.all` over the fleet would
+// spawn one ssh per agent at once, which moves the load off the event loop and
+// onto the machine rather than removing it.
+async function captureTmuxAsync(host: string | null, tmuxArgs: string[], opts: { timeout?: number } = {}): Promise<string> {
+  const spec = tmuxCaptureSpec(host, tmuxArgs, opts)
+  const { stdout } = await execFileAsync(spec.file, spec.args, { timeout: spec.timeout, encoding: 'utf-8' })
+  return stdout
 }
 
 // Tri-state run state. For a remote agent a failed list-sessions query is
@@ -1882,6 +1911,17 @@ export function capturePane(session: string, host: string | null = null): string
   }
 }
 
+// Async capturePane, for callers that run on a timer rather than on a request.
+// Same contract to the byte: null on any failure, never throws -- a watcher must
+// read "capture failed" as "not ready", not as an exception to handle.
+export async function capturePaneAsync(session: string, host: string | null = null): Promise<string | null> {
+  try {
+    return await captureTmuxAsync(host, ['capture-pane', '-t', session, '-p'])
+  } catch {
+    return null
+  }
+}
+
 // Capture a pane for STUCK-INPUT detection, with the editor's dim "ghost
 // suggestion" autocomplete removed. Captures WITH colour (`-e`) and strips the
 // SGR-2 (dim) ghost + all ANSI, so a hint shown in an empty input box is never
@@ -1894,6 +1934,18 @@ export function capturePane(session: string, host: string | null = null): string
 export function captureParkedInputView(session: string, host: string | null = null): string | null {
   try {
     return stripGhostSuggestion(captureTmux(host, ['capture-pane', '-t', session, '-e', '-p']))
+  } catch {
+    return null
+  }
+}
+
+// Async captureParkedInputView. The ghost-suggestion strip is NOT optional here
+// either: the auto-submitting recovery paths must read the pane through this,
+// not through capturePaneAsync, or a dim autocomplete hint gets re-typed and
+// Enter-submitted. Same `-e` capture, same strip, same null-on-failure.
+export async function captureParkedInputViewAsync(session: string, host: string | null = null): Promise<string | null> {
+  try {
+    return stripGhostSuggestion(await captureTmuxAsync(host, ['capture-pane', '-t', session, '-e', '-p']))
   } catch {
     return null
   }
