@@ -777,12 +777,23 @@ function runTmux(host: string | null, tmuxArgs: string[], opts: { timeout?: numb
   execFileSync(inv.file, inv.args, { timeout: opts.timeout ?? (host ? 8000 : 3000), stdio: ['ignore', 'ignore', 'pipe'] })
 }
 
-function captureTmux(host: string | null, tmuxArgs: string[], opts: { timeout?: number } = {}): string {
+// What to run, split out from how to run it. A second capture path is about to
+// exist (async, for the watcher sweeps), and the two have to agree on binary,
+// args and deadline or a detector reading through one will see a different pane
+// from a request reading through the other -- a difference no functional test
+// can distinguish from a real state change. Keeping the decision here makes the
+// agreement structural: a timeout tuned in this function moves both callers.
+function tmuxCaptureSpec(host: string | null, tmuxArgs: string[], opts: { timeout?: number } = {}): { file: string, args: string[], timeout: number } {
   if (host) ensureControlDir()
   const inv = buildTmuxInvocation(host, tmuxBin(), tmuxArgs)
+  return { file: inv.file, args: inv.args, timeout: opts.timeout ?? (host ? 8000 : 3000) }
+}
+
+function captureTmux(host: string | null, tmuxArgs: string[], opts: { timeout?: number } = {}): string {
+  const spec = tmuxCaptureSpec(host, tmuxArgs, opts)
   // stdout piped (we return it); stderr piped too so tmux's `can't find session`
   // noise lands in err.stderr on failure rather than the parent stderr / dashboard.log.
-  return execFileSync(inv.file, inv.args, { timeout: opts.timeout ?? (host ? 8000 : 3000), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] })
+  return execFileSync(spec.file, spec.args, { timeout: spec.timeout, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] })
 }
 
 // Tri-state run state. For a remote agent a failed list-sessions query is
