@@ -30,10 +30,10 @@ vi.mock('../web/agent-config.js', () => ({
   AGENTS_BASE_DIR: '/tmp/test-claudeclaw/agents',
 }))
 
-const mockCapturePane = vi.fn<(session: string) => string | null>()
+const mockCapturePane = vi.fn<(session: string) => string | null | Promise<string | null>>()
 vi.mock('../web/agent-process.js', () => ({
   agentSessionName: (name: string) => `agent-${name}`,
-  capturePane: (session: string) => mockCapturePane(session),
+  capturePaneAsync: async (session: string) => mockCapturePane(session),
 }))
 
 vi.mock('../web/main-agent.js', () => ({
@@ -188,14 +188,50 @@ describe('attemptChannelMcpReconnect', () => {
     mockCapturePane.mockReturnValueOnce('preflight-not-busy')
   })
 
-  it('defers (sends NO keys) when the pane is actively generating', () => {
+  it('yields before driving tmux while the first pane capture is in flight', async () => {
+    mockCapturePane
+      .mockReturnValueOnce('/mcp menu')
+      .mockReturnValueOnce('plugin:telegram:telegram')
+      .mockReturnValueOnce(SUBMENU_FAILED_TOP)
+
+    const pending = attemptChannelMcpReconnect('marveen')
+
+    expect(pending).toBeInstanceOf(Promise)
+    expect(mockExecFileSync).not.toHaveBeenCalled()
+    const result = await pending
+    expect(result.ok).toBe(true)
+  })
+
+  it('preserves single-flight semantics across async capture yields', async () => {
+    mockCapturePane.mockReset()
+    let releaseCapture!: (pane: string | null) => void
+    const stalledCapture = new Promise<string | null>((resolve) => {
+      releaseCapture = resolve
+    })
+    mockCapturePane.mockReturnValueOnce(stalledCapture)
+
+    const first = attemptChannelMcpReconnect('marveen')
+    const duplicate = await attemptChannelMcpReconnect('marveen')
+
+    expect(duplicate).toEqual({ ok: false, message: 'Reconnect already in progress' })
+    expect(mockCapturePane).toHaveBeenCalledTimes(1)
+    expect(mockExecFileSync).not.toHaveBeenCalled()
+
+    releaseCapture('· Working… (esc to interrupt)')
+    expect((await first).message).toContain('busy')
+
+    mockCapturePane.mockReturnValueOnce('· Working… (esc to interrupt)')
+    expect((await attemptChannelMcpReconnect('marveen')).message).toContain('busy')
+  })
+
+  it('defers (sends NO keys) when the pane is actively generating', async () => {
     // Reni-reported root cause: the soft /mcp reconnect blindly pressed Escape
     // into a live session, interrupting work in progress. The busy-guard must
     // bail before any send-keys when detectPaneState reads 'busy'.
     mockCapturePane.mockReset()
     mockCapturePane.mockReturnValueOnce('· Synthesizing… (8s · ↓ 1.2k tokens · esc to interrupt)')
 
-    const result = attemptChannelMcpReconnect('marveen')
+    const result = await attemptChannelMcpReconnect('marveen')
 
     expect(result.ok).toBe(false)
     expect(result.message).toContain('busy')
@@ -206,14 +242,14 @@ describe('attemptChannelMcpReconnect', () => {
     expect(sendKeyCalls.length).toBe(0)
   })
 
-  it('connected state: steps Down onto Reconnect, then activates it', () => {
+  it('connected state: steps Down onto Reconnect, then activates it', async () => {
     mockCapturePane
       .mockReturnValueOnce('/mcp menu content')            // after /mcp
       .mockReturnValueOnce('plugin:telegram:telegram')     // first loop: matched on Up x1
       .mockReturnValueOnce(SUBMENU_CONNECTED_TOP)          // submenu capture: cursor on View tools
       .mockReturnValueOnce(SUBMENU_CONNECTED_ON_RECONNECT) // after one Down: cursor on Reconnect
 
-    const result = attemptChannelMcpReconnect('marveen')
+    const result = await attemptChannelMcpReconnect('marveen')
 
     expect(result.ok).toBe(true)
     expect(result.message).toContain('Reconnect')
@@ -225,13 +261,13 @@ describe('attemptChannelMcpReconnect', () => {
     expect(submenuEnters.length).toBeGreaterThanOrEqual(2) // open submenu + activate
   })
 
-  it('failed state: Reconnect is already selected, activates WITHOUT pressing Down', () => {
+  it('failed state: Reconnect is already selected, activates WITHOUT pressing Down', async () => {
     mockCapturePane
       .mockReturnValueOnce('/mcp menu')
       .mockReturnValueOnce('plugin:telegram:telegram')
       .mockReturnValueOnce(SUBMENU_FAILED_TOP) // cursor already on Reconnect
 
-    const result = attemptChannelMcpReconnect('marveen')
+    const result = await attemptChannelMcpReconnect('marveen')
 
     expect(result.ok).toBe(true)
     expect(result.message).toContain('Reconnect')
@@ -243,25 +279,25 @@ describe('attemptChannelMcpReconnect', () => {
     expect(downCalls.length).toBe(0)
   })
 
-  it('disabled state: activates Enable', () => {
+  it('disabled state: activates Enable', async () => {
     mockCapturePane
       .mockReturnValueOnce('/mcp menu')
       .mockReturnValueOnce('plugin:telegram:telegram')
       .mockReturnValueOnce(SUBMENU_DISABLED_TOP)
 
-    const result = attemptChannelMcpReconnect('marveen')
+    const result = await attemptChannelMcpReconnect('marveen')
 
     expect(result.ok).toBe(true)
     expect(result.message).toContain('Enable')
   })
 
-  it('never activates when only unsafe options exist (no Reconnect/Enable)', () => {
+  it('never activates when only unsafe options exist (no Reconnect/Enable)', async () => {
     mockCapturePane
       .mockReturnValueOnce('/mcp menu')
       .mockReturnValueOnce('plugin:telegram:telegram')
       .mockReturnValueOnce('plugin:telegram:telegram\n❯ View tools\n  Disable')
 
-    const result = attemptChannelMcpReconnect('marveen')
+    const result = await attemptChannelMcpReconnect('marveen')
 
     expect(result.ok).toBe(false)
     expect(result.message).toContain('No Reconnect/Enable')
@@ -272,7 +308,7 @@ describe('attemptChannelMcpReconnect', () => {
     expect(downCalls.length).toBe(0)
   })
 
-  it('finds the plugin on the third Up before opening the submenu', () => {
+  it('finds the plugin on the third Up before opening the submenu', async () => {
     mockCapturePane
       .mockReturnValueOnce('/mcp menu')
       .mockReturnValueOnce('no match')
@@ -280,40 +316,40 @@ describe('attemptChannelMcpReconnect', () => {
       .mockReturnValueOnce('plugin:telegram:telegram here') // matched on Up x3
       .mockReturnValueOnce(SUBMENU_FAILED_TOP)              // submenu: Reconnect selected
 
-    const result = attemptChannelMcpReconnect('marveen')
+    const result = await attemptChannelMcpReconnect('marveen')
 
     expect(result.ok).toBe(true)
     expect(result.message).toContain('Up x3')
   })
 
-  it('returns ok:false when capture fails after /mcp', () => {
+  it('returns ok:false when capture fails after /mcp', async () => {
     mockCapturePane.mockReturnValueOnce(null)
 
-    const result = attemptChannelMcpReconnect('marveen')
+    const result = await attemptChannelMcpReconnect('marveen')
 
     expect(result.ok).toBe(false)
     expect(result.message).toContain('capture')
   })
 
-  it('returns ok:false when plugin not found within max attempts', () => {
+  it('returns ok:false when plugin not found within max attempts', async () => {
     mockCapturePane.mockReturnValueOnce('/mcp menu')
     for (let i = 0; i < 8; i++) {
       mockCapturePane.mockReturnValueOnce('no match here')
     }
 
-    const result = attemptChannelMcpReconnect('marveen')
+    const result = await attemptChannelMcpReconnect('marveen')
 
     expect(result.ok).toBe(false)
     expect(result.message).toContain('not found')
   })
 
-  it('uses correct session for sub-agents', () => {
+  it('uses correct session for sub-agents', async () => {
     mockCapturePane
       .mockReturnValueOnce('/mcp')
       .mockReturnValueOnce('plugin:slack-channel:marveen-marketplace found')
       .mockReturnValueOnce('plugin:slack-channel:marveen-marketplace\n❯ Reconnect\n  Disable')
 
-    attemptChannelMcpReconnect('slacker')
+    await attemptChannelMcpReconnect('slacker')
 
     expect(mockExecFileSync).toHaveBeenCalledWith(
       '/usr/local/bin/tmux',
@@ -322,12 +358,12 @@ describe('attemptChannelMcpReconnect', () => {
     )
   })
 
-  it('sends Escape on error to clean up menu state', () => {
+  it('sends Escape on error to clean up menu state', async () => {
     mockExecFileSync.mockImplementationOnce(() => { /* Escape */ })
     mockExecFileSync.mockImplementationOnce(() => { /* sleep */ })
     mockExecFileSync.mockImplementationOnce(() => { throw new Error('tmux dead') })
 
-    const result = attemptChannelMcpReconnect('marveen')
+    const result = await attemptChannelMcpReconnect('marveen')
 
     expect(result.ok).toBe(false)
     const escapeCalls = mockExecFileSync.mock.calls.filter(

@@ -1015,7 +1015,7 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
     if (name !== MAIN_AGENT_ID && !isAgentRunning(name)) {
       json(res, { error: 'Agent is not running' }, 400); return true
     }
-    const result = attemptChannelMcpReconnect(name)
+    const result = await attemptChannelMcpReconnect(name)
     json(res, result)
     return true
   }
