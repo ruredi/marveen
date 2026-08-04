@@ -1,0 +1,38 @@
+# Canonical commit identities for the upstream-facing clone.
+#
+# Ruling: Max, 2026-08-04 12:54 (routed from the fleet identity question).
+#   marveen-contrib (this repo, upstream-facing) -> AGENT ID
+#   internal repos (marveen, ~/.claude/skills)   -> human persona name
+# Rationale: an agent id does not claim a real person. Upstream history is read
+# by people outside this fleet, and a persona name there asserts a contributor
+# who does not exist.
+#
+# SCOPE, because this file is easy to over-read: this maps the LOCAL working
+# identity only. What authorship a public PR finally carries is decided per
+# patch, as part of Andras's GO under the upstream-contribution rule. Nothing
+# here creates or approves a publication decision.
+#
+# Name variants collected 2026-08-04 across marveen, marveen-contrib and
+# ~/.claude/skills (author side, --all), so an identity that has not committed
+# here yet is still covered the first time it does.
+
+lukas-senior-dev <lukas-senior-dev@marveen.local> Lukas Novák (Senior Dev) <lukas-senior-dev@marveen.local>
+lukas-senior-dev <lukas-senior-dev@marveen.local> Lukas Novák <lukas-senior-dev@marveen.local>
+lukas-senior-dev <lukas-senior-dev@marveen.local> Lukas Novak (Senior Dev) <lukas-senior-dev@marveen.local>
+astrid-principal-dev <astrid-principal-dev@marveen.local> Astrid Nilsson <astrid-principal-dev@marveen.local>
+andrei-devops-lead <andrei-devops-lead@marveen.local> Andrei Popescu (DevOps Lead) <andrei-devops-lead@marveen.local>
+andrei-devops-lead <andrei-devops-lead@marveen.local> Andrei Popescu <andrei-devops-lead@marveen.local>
+priya-engineering-lead <priya-engineering-lead@marveen.local> Priya Sharma <priya-engineering-lead@marveen.local>
+priya-engineering-lead <priya-engineering-lead@marveen.local> Priya Sharma (Engineering Lead) <priya-engineering-lead@marveen.local>
+priya-engineering-lead <priya-engineering-lead@marveen.local> Priya (Engineering Lead) <priya-engineering-lead@marveen.local>
+marta-qa-lead <marta-qa-lead@marveen.local> Marta Kowalska (QA lead) <marta-qa-lead@marveen.local>
+marta-qa-lead <marta-qa-lead@marveen.local> Marta Kowalska <marta-qa-lead@marveen.local>
+rafael-automation-engineer <rafael-automation-engineer@marveen.local> Rafael Costa <rafael-automation-engineer@marveen.local>
+rafael-automation-engineer <rafael-automation-engineer@marveen.local> Rafael Costa (Automation Engineer) <rafael-automation-engineer@marveen.local>
+emeka-principal-dev <emeka-principal-dev@marveen.local> Emeka Okafor (Principal Dev) <emeka-principal-dev@marveen.local>
+emeka-principal-dev <emeka-principal-dev@marveen.local> Emeka (Principal Dev) <emeka-principal-dev@marveen.local>
+max <max@marveen.local> Max <max@marveen.local>
+max <max@marveen.local> Max (AI Assistant) <max@marveen.local>
+max <max@marveen.local> Max (Andras AI asszisztense) <max@marveen.local>
+fleet <fleet@marveen.local> Marveen fleet <fleet@marveen.local>
+fleet <fleet@marveen.local> Marveen fleet (vegyes) <fleet@marveen.local>
